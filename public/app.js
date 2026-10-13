@@ -1,0 +1,26 @@
+import {calculate,normalize} from './calc.js';
+const $=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt=n=>new Intl.NumberFormat('es-AR',{maximumFractionDigits:2}).format(n);
+let data=[],favorites=new Set(),onlyFav=false;
+try{favorites=new Set(JSON.parse(localStorage.getItem('illia-favorites')||'[]'));}catch{}
+let toastTimer;
+function toast(msg){$('toast').textContent=msg;$('toast').style.display='block';clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').style.display='none',2200);}
+function textDose(m,r){if(r.manual)return r.text;if(r.error)return r.error;return `${r.gotes!==null?r.gotes+' gotas ('+fmt(r.ml)+' mL)':fmt(r.ml)+' mL'} · ${fmt(r.mg)} mg por toma · cada ${r.hours} h${r.ev?' · EV':''}${r.limited?' · máximo diario aplicado':''}`;}
+function render(){
+ const q=normalize($('search').value.trim()),type=$('presentation').value,weight=$('weight').value.trim();
+ const rows=data.filter(m=>(!q||normalize(m.monodroga+' '+m.nombresComerciales).includes(q))&&(!type||m.presentacion===type)&&(!onlyFav||favorites.has(m.id)));
+ $('count').textContent=`${rows.length} de ${data.length} registros`;
+ $('weightHint').textContent=weight?(calculate({adminSegun:'Dosis'},weight).error||`Cálculos para ${fmt(Number(weight.replace(',','.')))} kg`):'Ingresá el peso para calcular.';
+ $('results').innerHTML=rows.length?rows.map(m=>{
+ const r=weight?calculate(m,weight):null;
+ const output=!r?'<p>Ingresá el peso para calcular.</p>':r.error?`<p>${esc(r.error)}</p>`:r.manual?`<p class="manual">${esc(r.text)}${r.interval?' Cada '+esc(r.interval)+' horas.':''}</p>`:`<strong>${r.gotes!==null?r.gotes+' gotas':fmt(r.ml)+' mL'}</strong><p>${fmt(r.mg)} mg por toma · cada ${r.hours} h${r.ev?' · EV':''}${r.gotes!==null?' · '+fmt(r.ml)+' mL':''}</p>`;
+ return `<article class="card"><div class="card-top"><span class="badge">${esc(m.presentacion)}</span><button class="star" data-fav="${m.id}" aria-label="${favorites.has(m.id)?'Quitar de':'Agregar a'} favoritos" aria-pressed="${favorites.has(m.id)}">${favorites.has(m.id)?'★':'☆'}</button></div><h3>${esc(m.monodroga)}</h3><p class="brands">${esc(m.nombresComerciales||'Sin marca consignada')}</p><div class="concentration">Concentración: <b>${esc(m.concentracion||'No consignada')} ${esc(m.unidades)}</b></div><div class="dose">${output}</div>${r?.limited?'<p class="limited">Máximo diario aplicado: '+fmt(r.max)+' mg/día.</p>':''}<div class="meta">${m.dosisPonderal?'Pauta de la fuente: '+esc(m.dosisPonderal)+(m.adminSegun==='Especial1'?' g/kg/día':' mg/kg/día')+'<br>':''}${m.dosisMaxima?'Máximo consignado: '+esc(m.dosisMaxima)+' (unidad según registro)':''}${m.presentacion==='Gotas'&&['Peso','PesoEv'].includes(m.adminSegun)?'<br>Factor de la fuente: 20 gotas/mL. Confirmar gotero.':''}</div><div class="copy"><button data-copy="${m.id}" ${!r||r.error?'disabled':''}>Copiar ${r?.manual?'registro':'cálculo'}</button></div></article>`;
+ }).join(''):'<div class="empty">No se encontraron presentaciones. Probá otra búsqueda o quitá los filtros.</div>';
+}
+for(const id of ['weight','search'])$(id).addEventListener('input',render);
+$('presentation').addEventListener('change',render);
+$('favFilter').addEventListener('click',()=>{onlyFav=!onlyFav;$('favFilter').setAttribute('aria-pressed',onlyFav);render();});
+document.querySelectorAll('[data-query]').forEach(b=>b.addEventListener('click',()=>{$('search').value=b.dataset.query;render();}));
+$('clear').addEventListener('click',()=>{$('search').value='';$('presentation').value='';onlyFav=false;$('favFilter').setAttribute('aria-pressed',false);render();$('search').focus();});
+$('results').addEventListener('click',async e=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.fav){favorites.has(b.dataset.fav)?favorites.delete(b.dataset.fav):favorites.add(b.dataset.fav);try{localStorage.setItem('illia-favorites',JSON.stringify([...favorites]));}catch{}render();}if(b.dataset.copy){const m=data.find(x=>x.id===b.dataset.copy),r=calculate(m,$('weight').value);let text=`${m.monodroga}\n${m.nombresComerciales}\nConcentración: ${m.concentracion} ${m.unidades}\nPeso: ${$('weight').value} kg\n${textDose(m,r)}\nFuente: Mi Registro Clínico`;try{await navigator.clipboard.writeText(text);toast('Cálculo copiado');}catch{toast('No se pudo copiar. Seleccioná el texto del cálculo.');}}});
+try{const response=await fetch('medicamentos.json');if(!response.ok)throw Error();const catalog=await response.json();data=catalog.medicines;[...new Set(data.map(m=>m.presentacion))].sort().forEach(p=>{const o=document.createElement('option');o.value=p;o.textContent=p;$('presentation').append(o);});$('sourceDate').textContent=`Importado: ${new Date(catalog.importedAt).toLocaleDateString('es-AR')} · ${data.length} registros.`;render();}catch{$('count').textContent='Catálogo no disponible';$('results').innerHTML='<div class="empty">No se pudo cargar el catálogo. Recargá la página.</div>';}
